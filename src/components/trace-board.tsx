@@ -1,8 +1,16 @@
 import * as Haptics from 'expo-haptics';
-import { useMemo, useRef, useState } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Svg, { Circle, Path, Text as SvgText } from 'react-native-svg';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
+import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
 
 import { colors } from '@/lib/colors';
 import { advance, resample, toSvgPath, type Point, type Stroke } from '@/lib/geometry';
@@ -65,55 +73,129 @@ export function TraceBoard({ strokes, size, color, onStrokeDone, onComplete }: P
     .onUpdate((e) => handleTouch(e.x, e.y));
 
   const target = !done ? current[Math.min(reached, current.length - 1)] : null;
+  const scale = size / 100;
 
   return (
-    <GestureDetector gesture={pan}>
-      <View style={[styles.board, { width: size, height: size }]}>
-        <Svg width={size} height={size} viewBox="0 0 100 100">
-          {/* Silueta gruesa de la letra */}
-          {strokes.map((s, i) => (
-            <Path key={`guide-${i}`} d={toSvgPath(s)} stroke={colors.guide} strokeWidth={13} strokeLinecap="round" strokeLinejoin="round" fill="none" />
-          ))}
-          {/* Línea discontinua por el centro */}
-          {strokes.map((s, i) => (
-            <Path key={`dash-${i}`} d={toSvgPath(s)} stroke={colors.guideDash} strokeWidth={1.2} strokeDasharray="2.5 2.5" strokeLinecap="round" fill="none" />
-          ))}
-          {/* Trazos ya completados */}
-          {checkpoints.slice(0, strokeIndex).map((s, i) => (
-            <Path key={`done-${i}`} d={toSvgPath(s)} stroke={color} strokeWidth={10} strokeLinecap="round" strokeLinejoin="round" fill="none" />
-          ))}
-          {/* Trazo en curso */}
-          {!done && reached > 0 && (
-            <Path d={toSvgPath(current.slice(0, reached + 1))} stroke={color} strokeWidth={10} strokeLinecap="round" strokeLinejoin="round" fill="none" />
-          )}
-          {/* Inicio de los trazos pendientes, numerados */}
-          {checkpoints.map((s, i) =>
-            i > strokeIndex ? (
-              <Circle key={`start-${i}`} cx={s[0].x} cy={s[0].y} r={3.5} fill={colors.pending} />
-            ) : null,
-          )}
-          {/* Punto que hay que arrastrar */}
-          {target && (
-            <>
-              <Circle cx={target.x} cy={target.y} r={7} fill={colors.target} opacity={0.25} />
-              <Circle cx={target.x} cy={target.y} r={4.5} fill={colors.target} />
-              {reached === 0 && (
-                <SvgText x={target.x} y={target.y + 1.9} fontSize={5.5} fontWeight="bold" fill="#fff" textAnchor="middle">
-                  {strokeIndex + 1}
-                </SvgText>
-              )}
-            </>
-          )}
-        </Svg>
-      </View>
-    </GestureDetector>
+    <View style={[styles.shadow, { width: size, height: size }]}>
+      <GestureDetector gesture={pan}>
+        <View style={[styles.board, { width: size, height: size }]}>
+          <Svg width={size} height={size} viewBox="0 0 100 100">
+            {/* Pauta de cuaderno: arriba, centro y abajo */}
+            <Line x1={4} x2={96} y1={10} y2={10} stroke="#F3EEF8" strokeWidth={0.6} />
+            <Line x1={4} x2={96} y1={50} y2={50} stroke="#F3EEF8" strokeWidth={0.6} strokeDasharray="2 2" />
+            <Line x1={4} x2={96} y1={90} y2={90} stroke="#E9E1F2" strokeWidth={0.8} />
+
+            {/* Silueta gruesa de la letra */}
+            {strokes.map((s, i) => (
+              <Path key={`guide-${i}`} d={toSvgPath(s)} stroke={colors.guide} strokeWidth={13} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+            ))}
+            {/* Línea discontinua por el centro */}
+            {strokes.map((s, i) => (
+              <Path key={`dash-${i}`} d={toSvgPath(s)} stroke={colors.guideDash} strokeWidth={1.2} strokeDasharray="2.5 2.5" strokeLinecap="round" fill="none" />
+            ))}
+            {/* Trazos ya completados, con un brillo encima para que parezcan de plastilina */}
+            {checkpoints.slice(0, strokeIndex).map((s, i) => (
+              <InkStroke key={`done-${i}`} points={s} color={color} />
+            ))}
+            {/* Trazo en curso */}
+            {!done && reached > 0 && <InkStroke points={current.slice(0, reached + 1)} color={color} />}
+            {/* Inicio de los trazos pendientes */}
+            {checkpoints.map((s, i) =>
+              i > strokeIndex ? <Circle key={`start-${i}`} cx={s[0].x} cy={s[0].y} r={3.5} fill={colors.pending} /> : null,
+            )}
+            {/* Punto que hay que arrastrar */}
+            {target && (
+              <>
+                <Circle cx={target.x} cy={target.y} r={5.2} fill="#fff" />
+                <Circle cx={target.x} cy={target.y} r={4.3} fill={colors.target} />
+                {reached === 0 && (
+                  <SvgText x={target.x} y={target.y + 1.9} fontSize={5.5} fontWeight="bold" fill="#fff" textAnchor="middle">
+                    {strokeIndex + 1}
+                  </SvgText>
+                )}
+              </>
+            )}
+          </Svg>
+
+          {target && <Pulse x={target.x * scale} y={target.y * scale} radius={9 * scale} />}
+          {target && strokeIndex === 0 && reached === 0 && <HandHint x={target.x * scale} y={target.y * scale} size={size} />}
+        </View>
+      </GestureDetector>
+    </View>
+  );
+}
+
+function InkStroke({ points, color }: { points: Stroke; color: string }) {
+  const d = toSvgPath(points);
+  return (
+    <>
+      <Path d={d} stroke={color} strokeWidth={10} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <Path
+        d={d}
+        stroke="#fff"
+        strokeOpacity={0.35}
+        strokeWidth={2.2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+        transform="translate(-1.3 -1.3)"
+      />
+    </>
+  );
+}
+
+/** Anillo que late alrededor del punto verde para llamar la atención. */
+function Pulse({ x, y, radius }: { x: number; y: number; radius: number }) {
+  const t = useSharedValue(0);
+  useEffect(() => {
+    t.value = withRepeat(withTiming(1, { duration: 1100, easing: Easing.out(Easing.quad) }), -1, false);
+  }, [t]);
+  const style = useAnimatedStyle(() => ({
+    opacity: 0.55 * (1 - t.value),
+    transform: [{ scale: 0.6 + t.value * 0.9 }],
+  }));
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.pulse,
+        { left: x - radius, top: y - radius, width: radius * 2, height: radius * 2, borderRadius: radius },
+        style,
+      ]}
+    />
+  );
+}
+
+/** Manita que indica dónde empezar, solo al principio. */
+function HandHint({ x, y, size }: { x: number; y: number; size: number }) {
+  const t = useSharedValue(0);
+  useEffect(() => {
+    t.value = withRepeat(withSequence(withTiming(1, { duration: 600 }), withTiming(0, { duration: 600 })), -1, false);
+  }, [t]);
+  const fontSize = size * 0.11;
+  const style = useAnimatedStyle(() => ({ transform: [{ translateY: t.value * 8 }] }));
+  return (
+    <Animated.View pointerEvents="none" style={[styles.hand, { left: x - fontSize * 0.35, top: y + size * 0.04 }, style]}>
+      <Text style={{ fontSize }}>👆</Text>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
+  shadow: {
+    borderRadius: 32,
+    backgroundColor: colors.card,
+    shadowColor: '#3B2F4A',
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
+  },
   board: {
     backgroundColor: colors.card,
     borderRadius: 32,
     overflow: 'hidden',
   },
+  pulse: { position: 'absolute', backgroundColor: colors.target },
+  hand: { position: 'absolute' },
 });
